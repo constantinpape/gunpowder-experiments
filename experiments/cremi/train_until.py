@@ -7,11 +7,11 @@ import os
 import glob
 import math
 
-data_dir = '../../01_data'
+data_dir = '/groups/saalfeld/home/papec/Work/neurodata_hdd/mala_jan_original/raw'
 samples = [
-    'sample_A_padded_20160501.aligned.filled.cropped',
-    'sample_B_padded_20160501.aligned.filled.cropped',
-    'sample_C_padded_20160501.aligned.filled.cropped.0:90'
+    'sample_A.h5',
+    'sample_B.h5',
+    'sample_C.h5'
 ]
 phase_switch = 10000
 
@@ -38,7 +38,7 @@ def train_until(max_iteration, gpu):
     print("Traing until " + str(max_iteration) + " in phase " + phase)
 
     solver_parameters = SolverParameters()
-    solver_parameters.train_net = 'net.prototxt'
+    solver_parameters.train_net = 'default_unet.prototxt'
     solver_parameters.base_lr = 0.5e-4
     solver_parameters.momentum = 0.95
     solver_parameters.momentum2 = 0.999
@@ -56,19 +56,26 @@ def train_until(max_iteration, gpu):
         solver_parameters.resume_from = None
     solver_parameters.train_state.add_stage(phase)
 
+    # register new volume type
+    register_volume_type('MALIS_COMP_LABEL')
+    #register_volume_type('LOSS_SCALE')
+
+    # make request with all volume types we need
     request = BatchRequest()
-    request.add_volume_request(VolumeType.RAW, (84,268,268))
-    request.add_volume_request(VolumeType.GT_LABELS, (56,56,56))
-    request.add_volume_request(VolumeType.GT_MASK, (56,56,56))
-    request.add_volume_request(VolumeType.GT_AFFINITIES, (56,56,56))
+    request.add(VolumeTypes.RAW, Coordinate((84,268,268))*(40,4,4))
+    request.add(VolumeTypes.GT_LABELS, Coordinate((56,56,56))*(40,4,4))
+    request.add(VolumeTypes.GT_MASK, Coordinate((56,56,56))*(40,4,4))
+    request.add(VolumeTypes.GT_AFFINITIES, Coordinate((56,56,56))*(40,4,4))
+    request.add(VolumeTypes.LOSS_SCALE, Coordinate((56,56,56))*(40,4,4))
+    request.add(VolumeTypes.MALIS_COMP_LABEL, Coordinate((56,56,56))*(40,4,4))
 
     data_sources = tuple(
         Hdf5Source(
-            os.path.join(data_dir, sample + '.hdf'),
+            os.path.join(data_dir, sample),
             datasets = {
-                VolumeType.RAW: 'volumes/raw',
-                VolumeType.GT_LABELS: 'volumes/labels/neuron_ids_notransparency',
-                VolumeType.GT_MASK: 'volumes/labels/mask',
+                VolumeTypes.RAW: 'data',
+                VolumeTypes.GT_LABELS: 'volumes/labels/neuron_ids_notransparency',
+                VolumeTypes.GT_MASK: 'volumes/labels/mask',
             }
         ) +
         Normalize() +
@@ -81,42 +88,66 @@ def train_until(max_iteration, gpu):
         Hdf5Source(
             os.path.join(data_dir, 'sample_ABC_padded_20160501.defects.hdf'),
             datasets = {
-                VolumeType.RAW: 'defect_sections/raw',
-                VolumeType.ALPHA_MASK: 'defect_sections/mask',
+                VolumeTypes.RAW: 'defect_sections/raw',
+                VolumeTypes.ALPHA_MASK: 'defect_sections/mask',
             }
         ) +
-        RandomLocation(min_masked=0.05, mask_volume_type=VolumeType.ALPHA_MASK) +
+        RandomLocation(min_masked=0.05, mask_volume_type=VolumeTypes.ALPHA_MASK) +
         Normalize() +
         IntensityAugment(0.9, 1.1, -0.1, 0.1, z_section_wise=True) +
         ElasticAugment([4,40,40], [0,2,2], [0,math.pi/2.0], subsample=8) +
         SimpleAugment(transpose_only_xy=True)
     )
 
-    snapshot_request = BatchRequest({VolumeType.LOSS_GRADIENT: request.volumes[VolumeType.GT_AFFINITIES]})
-
     train_pipeline = (
         data_sources +
         RandomProvider() +
-        ElasticAugment([4,40,40], [0,2,2], [0,math.pi/2.0], prob_slip=0.05,prob_shift=0.05,max_misalign=10, subsample=8) +
-        SimpleAugment(transpose_only_xy=True) +
-        GrowBoundary(steps=4, only_xy=True) +
-        AddGtAffinities(malis.mknhood3d()) +
-        SplitAndRenumberSegmentationLabels() +
-        IntensityAugment(0.9, 1.1, -0.1, 0.1, z_section_wise=True) +
+        # first augmentations: add defect augmentations (only raw data)
         DefectAugment(
             prob_missing=0.03,
             prob_low_contrast=0.01,
             prob_artifact=0.03,
+            prob_deform=0.02,
             artifact_source=artifact_source,
             contrast_scale=0.5) +
-        IntensityScaleShift(2,-1) +
+        # next augmentation: elastic + flips in xy
+        ElasticAugment([4,40,40], [0,2,2], [0,math.pi/2.0], prob_slip=0.05,prob_shift=0.05,max_misalign=10, subsample=8) +
+        SimpleAugment(transpose_only_xy=True) +
+        # connected componets, grow boundaries and get affinities
+        SplitAndRenumberSegmentationLabels() +
+        GrowBoundary(steps=4, only_xy=True) +
+        AddGtAffinities(malis.mknhood3d()) +
+        # intensitiy augmentations and normalizations
+        IntensityAugment(0.9, 1.1, -0.1, 0.1, z_section_wise=True) +
+        IntensityScaleShift(2, -1) +
         ZeroOutConstSections() +
+        # magic prepare malis node
+        PrepareMalis() +
+	# balance the labels
+        BalanceLabels(labels_to_loss_scale_volume={VolumeTypes.GT_AFFINITIES: VolumeTypes.LOSS_SCALE},
+                        labels_to_mask_volumes={VolumeTypes.GT_AFFINITIES: (VolumeTypes.GT_MASK,)}) +
+	# run the actual traing
         PreCache(
-            request,
             cache_size=40,
             num_workers=10) +
-        Train(solver_parameters, use_gpu=gpu) +
-        Snapshot(every=100, output_filename='batch_{iteration}.hdf', additional_request=snapshot_request) +
+        Train(solver_parameters,
+              inputs={VolumeTypes.RAW: 'data',
+                      VolumeTypes.GT_AFFINITIES: 'aff_label',
+                      VolumeTypes.LOSS_SCALE: 'scale',
+                      VolumeTypes.MALIS_COMP_LABEL: 'comp_label',
+                      'affinity_neighborhood': 'nhood'},
+              outputs={VolumeTypes.PRED_AFFINITIES: 'aff_pred'},
+              gradients={VolumeTypes.LOSS_GRADIENT: 'aff_pred'},
+              use_gpu=gpu) +
+        Snapshot(
+            {
+                VolumeTypes.RAW: 'volumes/raw',
+                VolumeTypes.GT_LABELS: 'volumes/labels/neuron_ids',
+                VolumeTypes.GT_MASK: 'volumes/labels/mask',
+                VolumeTypes.GT_AFFINITIES: 'volumes/labels/affinities'
+            },
+            every=500,
+            output_filename='final_it={iteration}_id={id}.hdf') +
         PrintProfilingStats(every=10)
     )
 
