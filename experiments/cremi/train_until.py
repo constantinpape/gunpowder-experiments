@@ -6,6 +6,7 @@ import malis
 import os
 import glob
 import math
+import numpy as np
 
 data_dir = '/groups/saalfeld/home/papec/Work/neurodata_hdd/mala_jan_original/raw'
 samples = [
@@ -15,7 +16,21 @@ samples = [
 ]
 phase_switch = 10000
 
-def train_until(max_iteration, gpu):
+# long range neighborhood
+def make_long_range_nhood(long_range=4, xy_ranges=[1, 4, 8, 16]):
+    assert len(xy_ranges) == long_range
+    nhood = []
+    for i in range(long_range):
+        nhood_z = [- i, 0, 0]
+        nhood.append(nhood_z)
+        range_xy = - xy_ranges[i]
+        nhood_y = [0, range_xy, 0]
+        nhood.append(nhood_y)
+        nhood_x = [0, 0, range_xy]
+        nhood.append(nhood_x)
+    return np.array(nhood, dtype='int32')
+
+def train_until(max_iteration, gpu, long_range=False):
 
     # get most recent training result
     solverstates = [ int(f.split('.')[0].split('_')[-1]) for f in glob.glob('net_iter_*.solverstate') ]
@@ -38,7 +53,7 @@ def train_until(max_iteration, gpu):
     print("Traing until " + str(max_iteration) + " in phase " + phase)
 
     solver_parameters = SolverParameters()
-    solver_parameters.train_net = 'default_unet.prototxt'
+    solver_parameters.train_net = 'default_unet.prototxt' if not long_range else 'long_range_unet.prototxt'
     solver_parameters.base_lr = 0.5e-4
     solver_parameters.momentum = 0.95
     solver_parameters.momentum2 = 0.999
@@ -58,7 +73,7 @@ def train_until(max_iteration, gpu):
 
     # register new volume type
     register_volume_type('MALIS_COMP_LABEL')
-    #register_volume_type('LOSS_SCALE')
+    register_volume_type('LOSS_SCALE')
 
     # make request with all volume types we need
     request = BatchRequest()
@@ -111,12 +126,17 @@ def train_until(max_iteration, gpu):
             artifact_source=artifact_source,
             contrast_scale=0.5) +
         # next augmentation: elastic + flips in xy
-        ElasticAugment([4,40,40], [0,2,2], [0,math.pi/2.0], prob_slip=0.05,prob_shift=0.05,max_misalign=10, subsample=8) +
+        ElasticAugment(
+            [4,40,40], [0,2,2], [0,math.pi/2.0], prob_slip=0.05,prob_shift=0.05,max_misalign=10, subsample=8
+        ) +
         SimpleAugment(transpose_only_xy=True) +
         # connected componets, grow boundaries and get affinities
         SplitAndRenumberSegmentationLabels() +
-        GrowBoundary(steps=4, only_xy=True) +
-        AddGtAffinities(malis.mknhood3d()) +
+        GrowBoundary(
+            steps=4 if not long_range else 2, # we grow less for long range affinities
+            only_xy=True) +
+        AddGtAffinities(
+            malis.mknhood3d() if not long_range else make_long_range_nhood()) +
         # intensitiy augmentations and normalizations
         IntensityAugment(0.9, 1.1, -0.1, 0.1, z_section_wise=True) +
         IntensityScaleShift(2, -1) +
@@ -148,7 +168,7 @@ def train_until(max_iteration, gpu):
             },
             every=500,
             output_filename='final_it={iteration}_id={id}.hdf') +
-        PrintProfilingStats(every=10)
+        PrintProfilingStats(every=100)
     )
 
     iterations = max_iteration - trained_until
@@ -159,6 +179,7 @@ def train_until(max_iteration, gpu):
         for i in range(iterations):
             b.request_batch(request)
     print("Training finished")
+
 
 if __name__ == "__main__":
     set_verbose(False)

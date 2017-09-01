@@ -74,14 +74,25 @@ def long_range_unet(name):
 
     # Data input layer
     net.data = L.MemoryData(dim=[1, 1], ntop=1)
+
+    n_channels = 12
+
+    # TODO
     # Label input layer
-    net.aff_label = L.MemoryData(dim=[1, 3], ntop=1, include=[dict(phase=0)])
+    # I guess the second number is the number of channels
+    net.aff_label = L.MemoryData(dim=[1, n_channels], ntop=1, include=[dict(phase=0)])
+
     # Components label layer
+    # No idea about this one...
     net.comp_label = L.MemoryData(dim=[1, 2], ntop=1, include=[dict(phase=0, stage='malis')])
+
     # Scale input layer
-    net.scale = L.MemoryData(dim=[1, 3], ntop=1, include=[dict(phase=0, stage='euclid')])
+    # again second = channels ?!
+    net.scale = L.MemoryData(dim=[1, n_channels], ntop=1, include=[dict(phase=0, stage='euclid')])
+
     # Silence the not needed data and label integer values
-    net.nhood = L.MemoryData(dim=[1, 1, 3, 3], ntop=1, include=[dict(phase=0, stage='malis')])
+    # is this correct ????
+    net.nhood = L.MemoryData(dim=[1, n_channels, 3, 3], ntop=1, include=[dict(phase=0, stage='malis')])
 
     # USK-Net metalayer
     net.unet = ML.UNet(net.data,
@@ -92,7 +103,7 @@ def long_range_unet(name):
                        dropout = 0.0, use_deconv_uppath=False, use_stable_upconv=True)
 
     net.aff_out = L.Convolution(net.unet, kernel_size=[1],
-                                num_output=3,
+                                num_output=n_channels,
                                 param=[dict(lr_mult=1),dict(lr_mult=2)],
                                 weight_filler=dict(type='msra'),
                                 bias_filler=dict(type='constant'))
@@ -101,8 +112,16 @@ def long_range_unet(name):
     net.aff_pred = L.Sigmoid(net.aff_out, ntop=1, in_place=False)
 
     # Choose a loss function and input data, label and scale inputs. Only include it during the training phase (phase = 0)
-    net.euclid_loss = L.EuclideanLoss(net.aff_pred, net.aff_label, net.scale, ntop=0, loss_weight=1.0, include=[dict(phase=0, stage='euclid')])
-    net.malis_loss = L.MalisLoss(net.aff_pred, net.aff_label, net.comp_label, net.nhood, ntop=0, loss_weight=1.0, include=[dict(phase=0, stage='malis')])
+    net.euclid_loss = L.EuclideanLoss(
+        net.aff_pred, net.aff_label,
+        net.scale, ntop=0, loss_weight=1.0,
+        include=[dict(phase=0, stage='euclid')]
+    )
+    net.malis_loss = L.MalisLoss(
+        net.aff_pred, net.aff_label,
+        net.comp_label, net.nhood, ntop=0,
+        loss_weight=1.0, include=[dict(phase=0, stage='malis')]
+    )
 
     # Fix the spatial input dimensions. Note that only spatial dimensions get modified, the minibatch size
     # and the channels/feature maps must be set correctly by the user (since this code can definitely not
