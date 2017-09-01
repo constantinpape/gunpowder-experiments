@@ -30,7 +30,8 @@ def make_long_range_nhood(long_range=4, xy_ranges=[1, 4, 8, 16]):
         nhood.append(nhood_x)
     return np.array(nhood, dtype='int32')
 
-def train_until(max_iteration, gpu, long_range=False):
+
+def train_until(max_iteration, gpu, long_range=True):
 
     # get most recent training result
     solverstates = [ int(f.split('.')[0].split('_')[-1]) for f in glob.glob('net_iter_*.solverstate') ]
@@ -50,10 +51,16 @@ def train_until(max_iteration, gpu, long_range=False):
         phase = 'euclid'
     else:
         phase = 'malis'
-    print("Traing until " + str(max_iteration) + " in phase " + phase)
+
+    net_file = 'default_unet.prototxt' if not long_range else 'long_range_unet.prototxt'
+    print()
+    print("Training until " + str(max_iteration) + " in phase " + phase)
+    print("Training with architecture from %s" % net_file)
+    print("Using gpu: %i" % gpu)
+    print()
 
     solver_parameters = SolverParameters()
-    solver_parameters.train_net = 'default_unet.prototxt' if not long_range else 'long_range_unet.prototxt'
+    solver_parameters.train_net = net_file
     solver_parameters.base_lr = 0.5e-4
     solver_parameters.momentum = 0.95
     solver_parameters.momentum2 = 0.999
@@ -166,7 +173,7 @@ def train_until(max_iteration, gpu, long_range=False):
                 VolumeTypes.GT_MASK: 'volumes/labels/mask',
                 VolumeTypes.GT_AFFINITIES: 'volumes/labels/affinities'
             },
-            every=500,
+            every=100,
             output_filename='final_it={iteration}_id={id}.hdf') +
         PrintProfilingStats(every=100)
     )

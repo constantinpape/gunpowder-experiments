@@ -149,3 +149,4 @@ def long_range_unet(name):
 
 if __name__ == '__main__':
     default_unet('default_unet')
+    #long_range_unet('long_range_unet')
