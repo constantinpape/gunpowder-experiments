@@ -67,7 +67,7 @@ def default_unet(name):
         print(protonet, file=f)
 
 
-# TODO
+# unet with more channels for long-range affinities
 def long_range_unet(name):
     # Start a network
     net = caffe.NetSpec()
@@ -92,7 +92,7 @@ def long_range_unet(name):
 
     # Silence the not needed data and label integer values
     # is this correct ????
-    net.nhood = L.MemoryData(dim=[1, n_channels, 3, 3], ntop=1, include=[dict(phase=0, stage='malis')])
+    net.nhood = L.MemoryData(dim=[1, 1, n_channels, 3], ntop=1, include=[dict(phase=0, stage='malis')])
 
     # USK-Net metalayer
     net.unet = ML.UNet(net.data,
@@ -148,5 +148,5 @@ def long_range_unet(name):
 
 
 if __name__ == '__main__':
-    default_unet('default_unet')
-    #long_range_unet('long_range_unet')
+    #default_unet('default_unet')
+    long_range_unet('long_range_unet')

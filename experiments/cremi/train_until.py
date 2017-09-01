@@ -91,6 +91,9 @@ def train_until(max_iteration, gpu, long_range=True):
     request.add(VolumeTypes.LOSS_SCALE, Coordinate((56,56,56))*(40,4,4))
     request.add(VolumeTypes.MALIS_COMP_LABEL, Coordinate((56,56,56))*(40,4,4))
 
+    additional_request = BatchRequest()
+    additional_request.add(VolumeTypes.PRED_AFFINITIES, Coordinate((56,56,56))*(40,4,4))
+
     data_sources = tuple(
         Hdf5Source(
             os.path.join(data_dir, sample),
@@ -171,10 +174,12 @@ def train_until(max_iteration, gpu, long_range=True):
                 VolumeTypes.RAW: 'volumes/raw',
                 VolumeTypes.GT_LABELS: 'volumes/labels/neuron_ids',
                 VolumeTypes.GT_MASK: 'volumes/labels/mask',
-                VolumeTypes.GT_AFFINITIES: 'volumes/labels/affinities'
+                VolumeTypes.GT_AFFINITIES: 'volumes/labels/affinities',
+                VolumeTypes.PRED_AFFINITIES: 'volumes/labels/prediction'
             },
             every=100,
-            output_filename='final_it={iteration}_id={id}.hdf') +
+            output_filename='final_it={iteration}_id={id}.hdf',
+            additional_request=additional_request) +
         PrintProfilingStats(every=100)
     )
 
