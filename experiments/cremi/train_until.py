@@ -31,10 +31,10 @@ def make_long_range_nhood(long_range=4, xy_ranges=[1, 4, 8, 16]):
     return np.array(nhood, dtype='int32')
 
 
-def train_until(max_iteration, gpu, long_range=True):
+def train_until(max_iteration, gpu, long_range=False):
 
     # get most recent training result
-    solverstates = [ int(f.split('.')[0].split('_')[-1]) for f in glob.glob('net_iter_*.solverstate') ]
+    solverstates = [int(f.split('.')[0].split('_')[-1]) for f in glob.glob('net_iter_*.solverstate')]
     if len(solverstates) > 0:
         trained_until = max(solverstates)
         print("Resuming training from iteration " + str(trained_until))
@@ -91,6 +91,7 @@ def train_until(max_iteration, gpu, long_range=True):
     request.add(VolumeTypes.LOSS_SCALE, Coordinate((56,56,56))*(40,4,4))
     request.add(VolumeTypes.MALIS_COMP_LABEL, Coordinate((56,56,56))*(40,4,4))
 
+    # additional gradients for snapshots TODO add loss gradient
     additional_request = BatchRequest()
     additional_request.add(VolumeTypes.PRED_AFFINITIES, Coordinate((56,56,56))*(40,4,4))
 

@@ -1,14 +1,17 @@
 rm snapshots/*
 
-export NAME=$(basename "$PWD")
+export NAME=$(basename $PWD-prediction)
+export USER_ID=${UID}
+GUNPOWDER_PATH=$(readlink -f $HOME/Work/my_projects/nnets/gunpowder)
+TRAIN_PATH=$(readlink -f $HOME/Work/my_projects/nnets/gunpowder-experiments/experiments/cremi/)
 
 nvidia-docker rm -f $NAME
 
-NV_GPU=0 nvidia-docker run --rm \
+nvidia-docker run --rm \
     -u `id -u $USER` \
     -v $(pwd):/workspace \
+    -v /groups/saalfeld/home/papec:/groups/saalfeld/home/papec \
     -w /workspace \
     --name $NAME \
-    funkey/gunpowder:latest \
-    python -u predict.py
-
+    funkey/gunpowder:v0.3-pre2 \
+    /bin/bash -c "PYTHONPATH=${GUNPOWDER_PATH}:\$PYTHONPATH; python -u ${TRAIN_PATH}/predict_affinities.py $1 $2 $3"
