@@ -8,7 +8,7 @@ data_dir = '/groups/saalfeld/home/papec/Work/neurodata_hdd/mala_jan_original/raw
 
 def predict_affinities(iteration, sample, gpu, long_range=True):
 
-    prototxt = './long_range_unet.prototxt' if long_range else './default/default_unet.prototxt'
+    prototxt = './long_range_unet.prototxt' if long_range else './default_unet.prototxt'
     weights  = './net_iter_%i.caffemodel' % iteration
     assert os.path.exists(prototxt)
     assert os.path.exists(weights)
