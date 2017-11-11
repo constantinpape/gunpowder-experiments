@@ -87,9 +87,17 @@ def predict_affinities(iteration, sample, gpu, long_range=True):
 
         process_pipeline.request_batch(whole_request)
 
+
+def predict_all(iteration, gpu):
+    for sample in ('A', 'B', 'C', 'A+', 'B+', 'C+'):
+        predict_affinities(iteration, sample, gpu)
+
 if __name__ == "__main__":
     sample = sys.argv[1]
     iteration = int(sys.argv[2])
     gpu = int(sys.argv[3])
     set_verbose(True)
-    predict_affinities(iteration, sample, gpu)
+    if sample== 'ALL':
+        predict_all(iteration, gpu)
+    else:
+        predict_affinities(iteration, sample, gpu)

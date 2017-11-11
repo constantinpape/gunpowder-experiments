@@ -14,14 +14,14 @@ samples = [
     'sample_B.h5',
     'sample_C.h5'
 ]
-phase_switch = 10000
+phase_switch = 100000
 
 # long range neighborhood
-def make_long_range_nhood(long_range=4, xy_ranges=[1, 4, 8, 16]):
+def make_long_range_nhood(long_range=4, xy_ranges=[1, 3, 9, 27]):
     assert len(xy_ranges) == long_range
     nhood = []
     for i in range(long_range):
-        nhood_z = [- i, 0, 0]
+        nhood_z = [- (i+1), 0, 0]
         nhood.append(nhood_z)
         range_xy = - xy_ranges[i]
         nhood_y = [0, range_xy, 0]
@@ -31,7 +31,7 @@ def make_long_range_nhood(long_range=4, xy_ranges=[1, 4, 8, 16]):
     return np.array(nhood, dtype='int32')
 
 
-def train_until(max_iteration, gpu, long_range=False):
+def train_until(max_iteration, gpu, long_range=True):
 
     # get most recent training result
     solverstates = [int(f.split('.')[0].split('_')[-1]) for f in glob.glob('net_iter_*.solverstate')]
@@ -125,6 +125,11 @@ def train_until(max_iteration, gpu, long_range=False):
         SimpleAugment(transpose_only_xy=True)
     )
 
+    nhood = malis.mknhood3d() if not long_range else make_long_range_nhood()
+    print()
+    print(nhood)
+    print()
+
     train_pipeline = (
         data_sources +
         RandomProvider() +
@@ -133,7 +138,7 @@ def train_until(max_iteration, gpu, long_range=False):
             prob_missing=0.03,
             prob_low_contrast=0.01,
             prob_artifact=0.03,
-            prob_deform=0.02,
+            prob_deform=0.03,
             artifact_source=artifact_source,
             contrast_scale=0.5) +
         # next augmentation: elastic + flips in xy
@@ -144,10 +149,9 @@ def train_until(max_iteration, gpu, long_range=False):
         # connected componets, grow boundaries and get affinities
         SplitAndRenumberSegmentationLabels() +
         GrowBoundary(
-            steps=4 if not long_range else 2, # we grow less for long range affinities
+            steps=1, # we grow less for long range affinities
             only_xy=True) +
-        AddGtAffinities(
-            malis.mknhood3d() if not long_range else make_long_range_nhood()) +
+        AddGtAffinities(nhood) +
         # intensitiy augmentations and normalizations
         IntensityAugment(0.9, 1.1, -0.1, 0.1, z_section_wise=True) +
         IntensityScaleShift(2, -1) +
