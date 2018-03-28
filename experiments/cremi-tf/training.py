@@ -125,11 +125,11 @@ def train_until(max_iteration):
                       ZeroOutConstSections() +
                       # magic prepare malis node
                       # PrepareMalis() +  # TODO don't think we need this
-	              # balance the labels
+                      # balance the labels
                       BalanceLabels(labels=VolumeTypes.GT_AFFINITIES,
                                     scales=VolumeTypes.GT_SCALE,
                                     mask=VolumeTypes.GT_AFFINITIES_MASK) +
-	              # run the actual traing
+                      # run the actual traing
                       PreCache(cache_size=40,
                                num_workers=10) +
                       Train('unet',
