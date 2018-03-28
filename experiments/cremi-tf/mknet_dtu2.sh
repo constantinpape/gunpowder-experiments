@@ -1,15 +1,10 @@
 #!/bin/bash
 
-# First argument: number of iterations, 
-# Second argument: gpu
-
-export NAME=$(basename "$PWD")
+export NAME="MK-UNET-DTU2"
 export USER_ID=${UID}
 GUNPOWDER_PATH=$(readlink -f $HOME/Work/my_projects/nnets/gunpowder)
+CNNECTOME_PATH=$(readlink -f $HOME/Work/my_projects/nnets/CNNectome)
 TRAIN_PATH=$(readlink -f $HOME/Work/my_projects/nnets/gunpowder-experiments/experiments/cremi-tf/)
-
-nvidia-docker rm -f $NAME
-rm snapshots/*
 
 nvidia-docker run --rm \
     -u ${USER_ID} \
@@ -18,4 +13,4 @@ nvidia-docker run --rm \
     -w /workspace \
     --name $NAME \
     funkey/gunpowder:v0.3-pre5 \
-    /bin/bash -c "export CUDA_VISIBLE_DEVICES=$2 PYTHONPATH=${GUNPOWDER_PATH}:\$PYTHONPATH; python -u ${TRAIN_PATH}/training.py $1"
+    /bin/bash -c "PYTHONPATH=${GUNPOWDER_PATH}:${CNNECTOME_PATH}:\$PYTHONPATH; python -u ${TRAIN_PATH}/mknet_dtu2.py"

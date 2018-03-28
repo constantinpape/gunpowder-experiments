@@ -1,5 +1,6 @@
 import tensorflow as tf
 
+
 def conv_pass(
         fmaps_in,
         kernel_size,
@@ -38,9 +39,10 @@ def conv_pass(
             padding='valid',
             data_format='channels_first',
             activation=activation,
-            name=name + '_%i'%i)
+            name=name + '_%i' % i)
 
     return fmaps
+
 
 def downsample(fmaps_in, factors, name='down'):
 
@@ -53,6 +55,7 @@ def downsample(fmaps_in, factors, name='down'):
         name=name)
 
     return fmaps
+
 
 def upsample(fmaps_in, factors, num_fmaps, activation='relu', name='up'):
 
@@ -71,6 +74,7 @@ def upsample(fmaps_in, factors, num_fmaps, activation='relu', name='up'):
 
     return fmaps
 
+
 def crop_zyx(fmaps_in, shape):
     '''Crop only the spacial dimensions to match shape.
     Args:
@@ -83,11 +87,11 @@ def crop_zyx(fmaps_in, shape):
     in_shape = fmaps_in.get_shape().as_list()
 
     offset = [
-        0, # batch
-        0, # channel
-        (in_shape[2] - shape[2])//2, # z
-        (in_shape[3] - shape[3])//2, # y
-        (in_shape[4] - shape[4])//2, # x
+        0,  # batch
+        0,  # channel
+        (in_shape[2] - shape[2])//2,  # z
+        (in_shape[3] - shape[3])//2,  # y
+        (in_shape[4] - shape[4])//2,  # x
     ]
     size = [
         in_shape[0],
@@ -144,18 +148,18 @@ def unet(fmaps_in,
     '''
 
     prefix = "    "*layer
-    print(prefix + "Creating U-Net layer %i"%layer)
+    print(prefix + "Creating U-Net layer %i" % layer)
     print(prefix + "f_in: " + str(fmaps_in.shape))
 
     # convolve
-    with tf.name_scope("lev%i"%layer):
+    with tf.name_scope("lev%i" % layer):
         f_left = conv_pass(
             fmaps_in,
             kernel_size=3,
             num_fmaps=num_fmaps,
             num_repetitions=2,
             activation=activation,
-            name='unet_layer_%i_left'%layer)
+            name='unet_layer_%i_left' % layer)
 
         # last layer does not recurse
         bottom_layer = (layer == len(downsample_factors))
@@ -168,7 +172,7 @@ def unet(fmaps_in,
         g_in = downsample(
             f_left,
             downsample_factors[layer],
-            'unet_down_%i_to_%i'%(layer, layer + 1))
+            'unet_down_%i_to_%i' % (layer, layer + 1))
 
         # recursive U-net
         g_out = unet(
@@ -187,7 +191,7 @@ def unet(fmaps_in,
             downsample_factors[layer],
             num_fmaps,
             activation=activation,
-            name='unet_up_%i_to_%i'%(layer + 1, layer))
+            name='unet_up_%i_to_%i' % (layer + 1, layer))
 
         print(prefix + "g_out_upsampled: " + str(g_out_upsampled.shape))
 
@@ -207,24 +211,24 @@ def unet(fmaps_in,
             kernel_size=3,
             num_fmaps=num_fmaps,
             num_repetitions=2,
-            name='unet_layer_%i_right'%layer)
+            name='unet_layer_%i_right' % layer)
 
         print(prefix + "f_out: " + str(f_out.shape))
 
     return f_out
+
 
 if __name__ == "__main__":
 
     # test
     raw = tf.placeholder(tf.float32, shape=(1, 1, 84, 268, 268))
 
-    model = unet(raw, 12, 5, [[1,3,3],[1,3,3],[1,3,3]])
+    model = unet(raw, 12, 5, [[1, 3, 3], [1, 3, 3], [1, 3, 3]])
     tf.train.export_meta_graph(filename='unet.meta')
 
     with tf.Session() as session:
         session.run(tf.initialize_all_variables())
         tf.summary.FileWriter('.', graph=tf.get_default_graph())
         # writer = tf.train.SummaryWriter(logs_path, graph=tf.get_default_graph())
-
 
     print(model.shape)

@@ -6,7 +6,7 @@ import os
 import math
 import json
 
-# FIXME no imports ...
+# FIXME no * imports ...
 from gunpowder import *
 from gunpowder.tensorflow import *
 
@@ -15,11 +15,12 @@ from gunpowder.tensorflow import *
 
 from nhoods import make_anisotropic_nhood
 
-data_dir = '/groups/saalfeld/home/papec/Work/neurodata_hdd/mala_jan_original/raw'
+data_dir = '/groups/saalfeld/home/papec/Work/neurodata_hdd/cremi_warped/gunpowder_training'
+data_dir2 = '/groups/saalfeld/home/papec/Work/neurodata_hdd/cremi'
 samples = [
-    'sample_A.h5',
-    'sample_B.h5',
-    'sample_C.h5'
+    'sampleA.h5',
+    'sampleB.h5',
+    'sampleC.h5'
 ]
 
 
@@ -41,9 +42,16 @@ def train_until(max_iteration):
     register_volume_type('LOSS_GRADIENT')
 
     # make request with all volume types we need
-    input_size = Coordinate((84, 268, 268))*(40, 4, 4)
-    output_size = Coordinate((48, 56, 56))*(40, 4, 4)
+
+    # sizes for the original unet
+    # input_size = Coordinate((84, 268, 268))*(40, 4, 4)
     # output_size = Coordinate((56, 56, 56))*(40, 4, 4)
+
+    # sizes for dtu2
+    input_size = Coordinate((43, 430, 430))*(40, 4, 4)
+    output_size = Coordinate((23, 218, 218))*(40, 4, 4)
+
+
     request = BatchRequest()
     request.add(VolumeTypes.RAW, input_size)
     request.add(VolumeTypes.GT_LABELS, output_size)
@@ -60,7 +68,7 @@ def train_until(max_iteration):
     data_sources = tuple(
         Hdf5Source(
             os.path.join(data_dir, sample),
-            datasets = {VolumeTypes.RAW: 'data',
+            datasets = {VolumeTypes.RAW: 'volumes/raw',
                         VolumeTypes.GT_LABELS: 'volumes/labels/neuron_ids_notransparency',
                         VolumeTypes.GT_MASK: 'volumes/labels/mask'},
 	    volume_specs = {VolumeTypes.RAW: VolumeSpec(voxel_size=(40,4,4)),
@@ -74,7 +82,7 @@ def train_until(max_iteration):
 
     artifact_source = (
         Hdf5Source(
-            os.path.join(data_dir, 'sample_ABC_padded_20160501.defects.hdf'),
+            os.path.join(data_dir2, 'sample_ABC_padded_20160501.defects.hdf'),
             datasets = {VolumeTypes.RAW: 'defect_sections/raw',
                 	VolumeTypes.ALPHA_MASK: 'defect_sections/mask'},
             volume_specs = {VolumeTypes.RAW: VolumeSpec(voxel_size=(40, 4, 4)),
