@@ -1,15 +1,18 @@
+import time
 from concurrent import futures
 import numpy as np
-import vigra
+import h5py
 from affinities import compute_fullscale_multiscale_affinities
 
 
 def prepare(sample, block_sizes):
-    path = '' % sample
-    labels = vigra.readHDF5(path, 'volumes/labels/neuron_ids')
+    path = '/nrs/saalfeld/papec/cremi2.0/training_data/V1_20180419/sample%s.h5' % sample
+    with h5py.File(path, 'r') as f:
+        labels = f['volumes/labels/neuron_ids'][:]
     ignore_label = labels[0, 0, 0]
     print("ignore label", ignore_label)
 
+    t0 = time.time()
     with futures.ThreadPoolExecutor(len(block_sizes)) as tp:
         tasks = [tp.submit(compute_fullscale_multiscale_affinities,
                            labels, bs,
@@ -17,18 +20,31 @@ def prepare(sample, block_sizes):
                            ignoreLabel=ignore_label)
                  for bs in block_sizes]
         res = [t.result() for t in tasks]
+    print("Calculating all affinities in", time.time() - t0, "s")
 
     affs = np.concatenate([re[0] for re in res], axis=0)
     mask = np.concatenate([re[1] for re in res], axis=0)
     print("Shape:")
     print(affs.shape, mask.shape)
+    print(mask.dtype)
 
-    vigra.writeHDF5(affs, path, 'volumes/affinities/multiscale_affinities', compression='gzip')
-    vigra.writeHDF5(mask, path, 'volumes/affinities/mask', compression='gzip')
+    with h5py.File(path) as f:
+        ds = f.create_dataset('volumes/affinities/multiscale_affinities',
+                              data=affs,
+                              compression='gzip')
+        ds.attrs['offset'] = [0., 0., 0.]
+        ds.attrs['resolution'] = [40., 4., 4.]
+
+        # TODO change dtype ?
+        ds = f.create_dataset('volumes/affinities/mask',
+                              data=mask.astype('float32'),
+                              compression='gzip')
+        ds.attrs['offset'] = [0., 0., 0.]
+        ds.attrs['resolution'] = [40., 4., 4.]
 
 
 if __name__ == '__main__':
     sample = 'A'
-    block_sizes = [[1, 3, 3], [1, 10, 10],
-                   [2, 20, 20], [4, 40, 40]]
+    block_sizes = [[1, 3, 3], [1, 9, 9],
+                   [2, 19, 19], [4, 39, 39]]
     prepare(sample, block_sizes)

@@ -7,21 +7,21 @@ import numpy as np
 from gunpowder import Coordinate, BatchRequest, VolumeTypes, Hdf5Source, VolumeSpec
 from gunpowder import Normalize, RandomLocation, Reject
 from gunpowder import IntensityAugment, ElasticAugment, SimpleAugment
-from gunpowder import RandomProvider, DefectAugment, SplitAndRenumberSegmentationLabels
-from gunpowder import GrowBoundary, AddGtAffinities, IntensityScaleShift, ZeroOutConstSections
+from gunpowder import RandomProvider, DefectAugment
+from gunpowder import IntensityScaleShift, ZeroOutConstSections
 from gunpowder import BalanceLabels, PreCache, PrintProfilingStats
 from gunpowder import register_volume_type, build
 from gunpowder.tensorflow import Train
 
 
 # TODO enable loading from existing checkpoint
-def train_lr_affinities(path_to_meta_graph,
-                        data_paths,
-                        artifacts_path,
-                        nhood,
-                        input_size,
-                        output_size,
-                        max_iteration):
+def train_fsms_affinities(path_to_meta_graph,
+                          data_paths,
+                          artifacts_path,
+                          nhood,
+                          input_size,
+                          output_size,
+                          max_iteration):
 
     assert isinstance(nhood, np.ndarray)
     assert nhood.ndim == 2
@@ -57,21 +57,20 @@ def train_lr_affinities(path_to_meta_graph,
 
     request = BatchRequest()
     request.add(VolumeTypes.RAW, input_size)
-    request.add(VolumeTypes.GT_LABELS, output_size)
-    request.add(VolumeTypes.GT_MASK, output_size)
     request.add(VolumeTypes.GT_AFFINITIES, output_size)
     request.add(VolumeTypes.GT_AFFINITIES_MASK, output_size)
     request.add(VolumeTypes.GT_MASK, output_size)
     request.add(VolumeTypes.GT_SCALE, output_size)
 
+    # TODO do we need to change something due to multi-channel input in the hdf5source?
     data_sources = tuple(Hdf5Source(path,
                                     datasets={VolumeTypes.RAW: 'volumes/raw',
-                                              VolumeTypes.GT_LABELS: 'volumes/labels/neuron_ids',
-                                              VolumeTypes.GT_MASK: 'volumes/labels/mask'},
+                                              VolumeTypes.GT_AFFINITIES: 'volumes/affinities/multiscale_affinities',
+                                              VolumeTypes.GT_AFFINITIES_MASK: 'volumes/affinities/mask'},
                                     volume_specs={VolumeTypes.RAW: VolumeSpec(voxel_size=(40, 4, 4)),
-                                                  VolumeTypes.GT_LABELS: VolumeSpec(voxel_size=(40, 4, 4)),
-                                                  VolumeTypes.GT_MASK: VolumeSpec(interpolatable=False,
-                                                                                  voxel_size=(40, 4, 4))}) +
+                                                  VolumeTypes.GT_AFFINITIES: VolumeSpec(voxel_size=(40, 4, 4)),
+                                                  VolumeTypes.GT_AFFINITIES_MASK: VolumeSpec(interpolatable=False,
+                                                                                             voxel_size=(40, 4, 4))}) +
                          Normalize() +
                          RandomLocation() +
                          Reject() for path in data_paths)
@@ -96,15 +95,12 @@ def train_lr_affinities(path_to_meta_graph,
                                     prob_deform=0.025,
                                     artifact_source=artifact_source,
                                     contrast_scale=0.5) +
-                      # next augmentation: elastic + flips in xy
+                      # next augmentation: elastic
+                      # TODO do we need to adjust this for multi-channel data ?
                       ElasticAugment([4, 40, 40], [0, 2, 2], [0, math.pi/2.0],
                                      prob_slip=0.05, prob_shift=0.05, max_misalign=10, subsample=8) +
-                      SimpleAugment(transpose_only_xy=True) +
-                      # connected componets, grow boundaries and get affinities
-                      SplitAndRenumberSegmentationLabels() +
-                      GrowBoundary(steps=1,  # we grow less for long range affinities
-                                   only_xy=True) +
-                      AddGtAffinities(nhood, gt_labels_mask=VolumeTypes.GT_MASK) +
+                      # we can't use the simple augmentations for now, because they destroy the meaning of affinties
+                      # SimpleAugment(transpose_only_xy=True) +
                       # intensitiy augmentations and normalizations
                       IntensityAugment(0.9, 1.1, -0.1, 0.1, z_section_wise=True) +
                       IntensityScaleShift(2, -1) +
