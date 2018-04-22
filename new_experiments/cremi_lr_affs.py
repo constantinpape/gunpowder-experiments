@@ -3,6 +3,8 @@ import os
 import sys
 import backend
 
+from gunpowder import set_verbose
+
 
 network_dict = {'mala': {'path': 'unet_mala', 'input_size': (84, 268, 268), 'output_size': (56, 56, 56)},
                 'dtu2': {'path': 'unet_dtu2', 'input_size': (43, 430, 430), 'output_size': ((23, 218, 218))}}
@@ -40,6 +42,7 @@ def train_until(network_key, max_iteration):
 
 
 if __name__ == '__main__':
+    set_verbose(False)
     network_key = sys.argv[1]
     assert network_key in network_dict
     iters = int(sys.argv[2])
