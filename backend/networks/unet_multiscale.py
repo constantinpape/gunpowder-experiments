@@ -1,142 +1,20 @@
 from __future__ import print_function
 import tensorflow as tf
 
-
-def conv_pass(fmaps_in,
-              kernel_size,
-              num_fmaps,
-              activation='relu',
-              name='conv_pass',
-              fov=(1, 1, 1),
-              voxel_size=(1, 1, 1),
-              prefix=''):
-    '''Create a convolution pass::
-        f_in --> f_1 --> ... --> f_n
-    where each ``-->`` is a convolution followed by a (non-linear) activation
-    function and ``n`` ``num_repetitions``. Each convolution will decrease the
-    size of the feature maps by ``kernel_size-1``.
-    Args:
-        f_in:
-            The input tensor of shape ``(batch_size, channels, depth, height, width)``.
-        kernel_size:
-            List of sizes of kernels. Length determines number of convolutional layers.
-            Kernel size forwarded to tf.layers.conv3d.
-        num_fmaps:
-            The number of feature maps to produce with each convolution.
-        activation:
-            Which activation to use after a convolution. Accepts the name of any
-            tensorflow activation function (e.g., ``relu`` for ``tf.nn.relu``).
-        name:
-            Base name for the conv layer.
-        fov:
-            Field of view of fmaps_in, in physical units.
-        voxel_size:
-            Size of a voxel in the input data, in physical units.
-    '''
-
-    fmaps = fmaps_in
-    if activation is not None:
-        activation = getattr(tf.nn, activation)
-
-    for i, ks in enumerate(kernel_size):
-        fov = tuple(f + (k-1) * vs for f, k, vs in zip(fov, ks, voxel_size))
-        # print(prefix, 'fov:', fov, 'voxsize:', voxel_size, 'anisotropy:', (fov[0]) / float(fov[1]))
-        fmaps = tf.layers.conv3d(
-            inputs=fmaps,
-            filters=num_fmaps,
-            kernel_size=ks,
-            padding='valid',
-            data_format='channels_first',
-            activation=activation,
-            name=name + '_%i' % i)
-
-    return fmaps, fov
+from .unet_dtu2 import conv_pass, downsample, upsample, crop_zyx
 
 
-def downsample(fmaps_in, factors, name='down', fov=(1, 1, 1), voxel_size=(1, 1, 1), prefix=''):
-    # fov = [f+(fac-1)*ai for f, fac,ai in zip(fov, factors,anisotropy)]
-    voxel_size = tuple(vs * fac for vs, fac in zip(voxel_size, factors))
-    print(prefix, 'fov:', fov, 'voxsize:', voxel_size, 'anisotropy:', (fov[0]) / float(fov[1]))
-    fmaps = tf.layers.max_pooling3d(
-        fmaps_in,
-        pool_size=factors,
-        strides=factors,
-        padding='valid',
-        data_format='channels_first',
-        name=name)
-
-    return fmaps, fov, voxel_size
-
-
-def upsample(fmaps_in,
-             factors,
-             num_fmaps,
-             activation='relu',
-             name='up',
-             fov=(1, 1, 1),
-             voxel_size=(1, 1, 1),
-             prefix=''):
-
-    voxel_size = tuple(vs / fac for vs, fac in zip(voxel_size, factors))
-
-    print(prefix, 'fov:', fov, 'voxsize:', voxel_size, 'anisotropy:', (fov[0]) / float(fov[1]))
-    if activation is not None:
-        activation = getattr(tf.nn, activation)
-
-    fmaps = tf.layers.conv3d_transpose(
-        fmaps_in,
-        filters=num_fmaps,
-        kernel_size=factors,
-        strides=factors,
-        padding='valid',
-        data_format='channels_first',
-        activation=activation,
-        name=name)
-
-    return fmaps, voxel_size
-
-
-def crop_zyx(fmaps_in, shape):
-    '''Crop only the spacial dimensions to match shape.
-    Args:
-        fmaps_in:
-            The input tensor.
-        shape:
-            A list (not a tensor) with the requested shape [_, _, z, y, x].
-    '''
-
-    in_shape = fmaps_in.get_shape().as_list()
-
-    offset = [
-        0,  # batch
-        0,  # channel
-        (in_shape[2] - shape[2])//2,  # z
-        (in_shape[3] - shape[3])//2,  # y
-        (in_shape[4] - shape[4])//2,  # x
-    ]
-    size = [
-        in_shape[0],
-        in_shape[1],
-        shape[2],
-        shape[3],
-        shape[4],
-    ]
-
-    fmaps = tf.slice(fmaps_in, offset, size)
-
-    return fmaps
-
-
-def unet_dtu2(fmaps_in,
-              num_fmaps,
-              fmap_inc_factor,
-              downsample_factors,
-              kernel_size_down,
-              kernel_size_up,
-              activation='relu',
-              layer=0,
-              fov=(1, 1, 1),
-              voxel_size=(1, 1, 1)):
+def unet_multiscale(fmaps_in,
+                    num_fmaps,
+                    fmap_inc_factor,
+                    downsample_factors,
+                    kernel_size_down,
+                    kernel_size_up,
+                    activation='relu',
+                    layer=0,
+                    fov=(1, 1, 1),
+                    voxel_size=(1, 1, 1),
+                    outputs=None):
 
     '''Create a U-Net::
         f_in --> f_left --------------------------->> f_right--> f_out
@@ -190,6 +68,10 @@ def unet_dtu2(fmaps_in,
     print(prefix + "Creating U-Net layer %i" % layer)
     print(prefix + "f_in: " + str(fmaps_in.shape))
 
+    if layer == 0:
+        assert outputs is None
+        outputs = []
+
     # convolve
     with tf.name_scope("lev%i" % layer):
 
@@ -201,8 +83,7 @@ def unet_dtu2(fmaps_in,
             name='unet_layer_%i_left' % layer,
             fov=fov,
             voxel_size=voxel_size,
-            prefix=prefix
-            )
+            prefix=prefix)
 
         # last layer does not recurse
         bottom_layer = (layer == len(downsample_factors))
@@ -210,6 +91,7 @@ def unet_dtu2(fmaps_in,
         if bottom_layer:
             print(prefix + "bottom layer")
             print(prefix + "f_out: " + str(f_left.shape))
+            outputs.append(f_left)
             return f_left, fov, voxel_size
 
         # downsample
@@ -223,7 +105,7 @@ def unet_dtu2(fmaps_in,
             prefix=prefix)
 
         # recursive U-net
-        g_out, fov, voxel_size = unet_dtu2(
+        g_out, fov, voxel_size = unet_multiscale(
             g_in,
             num_fmaps=num_fmaps*fmap_inc_factor,
             fmap_inc_factor=fmap_inc_factor,
@@ -232,6 +114,7 @@ def unet_dtu2(fmaps_in,
             kernel_size_up=kernel_size_up,
             activation=activation,
             layer=layer+1,
+            outputs=outputs,
             fov=fov,
             voxel_size=voxel_size)
 
@@ -270,7 +153,36 @@ def unet_dtu2(fmaps_in,
             voxel_size=voxel_size,
             prefix=prefix
             )
-
         print(prefix + "f_out: " + str(f_out.shape))
+        outputs.append(f_out)
 
-    return f_out, fov, voxel_size
+    if layer == 0:
+        # we invert the outputs, because we want the highest resolution
+        # to be outpurs[0]
+        return outputs[::-1], fov, voxel_size
+    else:
+        return f_out, fov, voxel_size
+
+
+# TODO what is the proper way to combine the losses in tf?
+# there is tf.reduce_sum, but according to `the internet` `+`
+# should also work
+def multiscale_loss_weighted(gt_affs, outputs, loss_weights):
+    assert len(gt_affs) == len(outputs) == len(loss_weights) == 4
+    loss = tf.losses.mean_squared_error(gt_affs[0], outputs[0], loss_weights[0]) +\
+        tf.losses.mean_squared_error(gt_affs[1], outputs[1], loss_weights[1]) +\
+        tf.losses.mean_squared_error(gt_affs[2], outputs[2], loss_weights[2]) +\
+        tf.losses.mean_squared_error(gt_affs[3], outputs[3], loss_weights[3])
+    return loss
+
+
+# TODO what is the proper way to combine the losses in tf?
+# there is tf.reduce_sum, but according to `the internet` `+`
+# should also work
+def multiscale_loss(gt_affs, outputs):
+    assert len(gt_affs) == len(outputs) == 4
+    loss = tf.losses.mean_squared_error(gt_affs[0], outputs[0]) +\
+        tf.losses.mean_squared_error(gt_affs[1], outputs[1]) +\
+        tf.losses.mean_squared_error(gt_affs[2], outputs[2]) +\
+        tf.losses.mean_squared_error(gt_affs[3], outputs[3])
+    return loss

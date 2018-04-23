@@ -1,5 +1,5 @@
 import sys
-from backend import build_unet_dtu2, build_unet_mala
+from backend import build_unet_dtu2, build_unet_mala, build_unet_multiscale
 from backend import build_unet_dtu2_inference, build_unet_mala_inference
 
 
@@ -20,6 +20,9 @@ if __name__ == '__main__':
         else:
             print("WITHOUT loss weighting")
         build_unet_dtu2(have_weights=have_weight)
+    elif network_key == 'multiscale':
+        assert not have_weight, "Weighting currently not supported for multiscale unet"
+        build_unet_multiscale(have_weights=have_weight)
     elif network_key == 'mala_inference':
         build_unet_mala_inference()
     elif network_key == 'dtu2_inference':
