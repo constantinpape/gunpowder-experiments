@@ -7,7 +7,7 @@ import numpy as np
 from gunpowder import Coordinate, BatchRequest, VolumeTypes, Hdf5Source, VolumeSpec
 from gunpowder import Normalize, RandomLocation, Reject
 from gunpowder import IntensityAugment, ElasticAugment, SimpleAugment
-from gunpowder import RandomProvider, DefectAugment
+from gunpowder import RandomProvider, DefectAugment, Snapshot
 from gunpowder import IntensityScaleShift, ZeroOutConstSections
 from gunpowder import BalanceLabels, PreCache, PrintProfilingStats
 from gunpowder import register_volume_type, build
@@ -36,9 +36,8 @@ def train_fsms_affinities(path_to_meta_graph,
     # register new volume type
     register_volume_type('RAW')
     register_volume_type('ALPHA_MASK')
-    register_volume_type('GT_LABELS')
     register_volume_type('GT_MASK')
-    register_volume_type('GT_SCALE')
+    # register_volume_type('GT_SCALE')
     register_volume_type('GT_AFFINITIES')
     register_volume_type('PREDICTED_AFFS')
     register_volume_type('LOSS_GRADIENT')
@@ -60,11 +59,12 @@ def train_fsms_affinities(path_to_meta_graph,
     request.add(VolumeTypes.GT_AFFINITIES, output_size)
     request.add(VolumeTypes.GT_AFFINITIES_MASK, output_size)
     request.add(VolumeTypes.GT_MASK, output_size)
-    request.add(VolumeTypes.GT_SCALE, output_size)
+    # request.add(VolumeTypes.GT_SCALE, output_size)
 
     # TODO do we need to change something due to multi-channel input in the hdf5source?
     data_sources = tuple(Hdf5Source(path,
                                     datasets={VolumeTypes.RAW: 'volumes/raw',
+                                              VolumeTypes.GT_MASK: 'volumes/labels/mask',
                                               VolumeTypes.GT_AFFINITIES: 'volumes/affinities/multiscale_affinities',
                                               VolumeTypes.GT_AFFINITIES_MASK: 'volumes/affinities/mask'},
                                     volume_specs={VolumeTypes.RAW: VolumeSpec(voxel_size=(40, 4, 4)),
@@ -106,30 +106,34 @@ def train_fsms_affinities(path_to_meta_graph,
                       IntensityScaleShift(2, -1) +
                       ZeroOutConstSections() +
                       # balance the labels
-                      BalanceLabels(labels=VolumeTypes.GT_AFFINITIES,
-                                    scales=VolumeTypes.GT_SCALE,
-                                    mask=VolumeTypes.GT_AFFINITIES_MASK) +
+                      # TODO We can't naively balance labels, because our values are
+                      # not in {0, 1}. What does Larissa do for distance regression ?
+                      # BalanceLabels(labels=VolumeTypes.GT_AFFINITIES,
+                      #               scales=VolumeTypes.GT_SCALE,
+                      #               mask=VolumeTypes.GT_AFFINITIES_MASK) +
                       # run the actual traing
-                      PreCache(cache_size=40,
-                               num_workers=10) +
+                      # TODO restore after debugging
+                      # PreCache(cache_size=40,
+                      #          num_workers=10) +
+                      PreCache(cache_size=10,
+                               num_workers=1) +
                       Train(path_to_meta_graph,
                             optimizer=net_io_names['optimizer'],
                             loss=net_io_names['loss'],
                             summary=net_io_names['summary'],
                             log_dir='./log/',
                             inputs={net_io_names['raw']: VolumeTypes.RAW,
-                                    net_io_names['gt_affs']: VolumeTypes.GT_AFFINITIES,
-                                    net_io_names['loss_weights']: VolumeTypes.GT_SCALE},
+                                    net_io_names['gt_affs']: VolumeTypes.GT_AFFINITIES},
+                                    # net_io_names['loss_weights']: VolumeTypes.GT_SCALE},
                             outputs={net_io_names['affs']: VolumeTypes.PREDICTED_AFFS},
                             gradients={net_io_names['affs']: VolumeTypes.LOSS_GRADIENT}) +
-                      # Snapshot({VolumeTypes.RAW: 'volumes/raw',
-                      #           VolumeTypes.GT_LABELS: 'volumes/labels/neuron_ids',
-                      #           VolumeTypes.GT_MASK: 'volumes/labels/mask',
-                      #           VolumeTypes.GT_AFFINITIES: 'volumes/labels/affinities',
-                      #           VolumeTypes.PRED_AFFINITIES: 'volumes/labels/prediction'},
-                      #         every=5000,
-                      #         output_filename='final_it={iteration}_id={id}.hdf',
-                      #         additional_request=additional_request) +
+                      # We activate snapshots for now to check if affinities are correct
+                      Snapshot({VolumeTypes.RAW: 'volumes/raw',
+                                VolumeTypes.GT_MASK: 'volumes/labels/mask',
+                                VolumeTypes.GT_AFFINITIES: 'volumes/labels/affinities',
+                                VolumeTypes.PREDICTED_AFFS: 'volumes/labels/prediction'},
+                              every=5000,
+                              output_filename='final_it={iteration}_id={id}.hdf') +
                       PrintProfilingStats(every=100))
 
     iterations = max_iteration

@@ -1,3 +1,5 @@
 from .train_lr_affinities import train_lr_affinities
+from .train_fsms_affinities import train_fsms_affinities
 from .neighborhoods import default_anisotropic_lr
 from .build_networks import build_unet_dtu2, build_unet_mala
+from .build_networks import build_unet_dtu2_inference, build_unet_mala_inference

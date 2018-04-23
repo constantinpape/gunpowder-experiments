@@ -37,7 +37,7 @@ def prepare(sample, block_sizes):
 
         # TODO change dtype ?
         ds = f.create_dataset('volumes/affinities/mask',
-                              data=mask.astype('float32'),
+                              data=mask.astype('uint8'),
                               compression='gzip')
         ds.attrs['offset'] = [0., 0., 0.]
         ds.attrs['resolution'] = [40., 4., 4.]
@@ -47,4 +47,8 @@ if __name__ == '__main__':
     sample = 'A'
     block_sizes = [[1, 3, 3], [1, 9, 9],
                    [2, 19, 19], [4, 39, 39]]
-    prepare(sample, block_sizes)
+    samples = ['B', 'C', '0', '1', '2']
+    with futures.ProcessPoolExecutor(5) as tp:
+        tasks = [tp.submit(prepare, sample, block_sizes)
+                 for sample in samples]
+        [t.result() for t in tasks]
