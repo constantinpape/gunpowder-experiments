@@ -7,9 +7,9 @@ import numpy as np
 from gunpowder import Coordinate, BatchRequest, VolumeTypes, Hdf5Source, VolumeSpec
 from gunpowder import Normalize, RandomLocation, Reject
 from gunpowder import IntensityAugment, ElasticAugment, SimpleAugment
-from gunpowder import RandomProvider, DefectAugment, SplitAndRenumberSegmentationLabels
-from gunpowder import GrowBoundary, AddGtAffinities, IntensityScaleShift, ZeroOutConstSections
-from gunpowder import BalanceLabels, PreCache, PrintProfilingStats
+from gunpowder import RandomProvider, DefectAugment, SplitAndRenumberSegmentationLabels, AddGtAffinities
+from gunpowder import GrowBoundary, AddMultiscaleAffinities, IntensityScaleShift, ZeroOutConstSections
+from gunpowder import PreCache, PrintProfilingStats  # , BalanceLabels
 from gunpowder import register_volume_type, build
 from gunpowder.tensorflow import Train
 
@@ -18,30 +18,38 @@ from gunpowder.tensorflow import Train
 def train_ms_affinities(path_to_meta_graph,
                         data_paths,
                         artifacts_path,
-                        nhood,
-                        input_sizes,
+                        block_shapes,
+                        input_size,
                         output_sizes,
                         max_iteration):
 
-    assert isinstance(nhood, np.ndarray)
-    assert nhood.ndim == 2
-    assert nhood.shape[1] == 3
+    assert isinstance(block_shapes, np.ndarray)
+    assert block_shapes.ndim == 2
+    assert block_shapes.shape[1] == 3
     assert all(os.path.exists(path) for path in data_paths)
     assert os.path.exists(artifacts_path)
+
+    # number of scales is hard-coded to 4 for now
+    n_scales = 4
+    assert len(output_sizes) == n_scales
 
     with open('net_io_names.json', 'r') as f:
         net_io_names = json.load(f)
 
-    # register new volume type
+    # register new volume type (single scale)
     register_volume_type('RAW')
     register_volume_type('ALPHA_MASK')
     register_volume_type('GT_LABELS')
     register_volume_type('GT_MASK')
     # TODO we don't balance the labels, because they are soft
     # register_volume_type('GT_SCALE')
-    register_volume_type('GT_AFFINITIES')
-    register_volume_type('PREDICTED_AFFS')
-    register_volume_type('LOSS_GRADIENT')
+
+    # register new volume type (multiple scales)
+    for scale in range(n_scales):
+        register_volume_type('GT_AFFINITIES_S%i' % scale)
+        register_volume_type('GT_AFFINITIES_MASK_S%i' % scale)
+        register_volume_type('PREDICTED_AFFS_S%i' % scale)
+        register_volume_type('LOSS_GRADIENT_S%i' % scale)
 
     # make request with all volume types we need
 
@@ -52,17 +60,21 @@ def train_ms_affinities(path_to_meta_graph,
     # sizes for dtu2
     # input_size = Coordinate((43, 430, 430))*(40, 4, 4)
     # output_size = Coordinate((23, 218, 218))*(40, 4, 4)
-    input_sizes = [Coordinate(input_size) * (40, 4, 4)]
-    output_sizes = [Coordinate(output_size) * (40, 4, 4)]
+    output_sizes = [Coordinate(output_size) * (40, 4, 4)
+                    for output_size in output_sizes]
 
     request = BatchRequest()
+    # add single scale requests
     request.add(VolumeTypes.RAW, input_size)
-    request.add(VolumeTypes.GT_LABELS, output_size)
-    request.add(VolumeTypes.GT_MASK, output_size)
-    request.add(VolumeTypes.GT_AFFINITIES, output_size)
-    request.add(VolumeTypes.GT_AFFINITIES_MASK, output_size)
-    request.add(VolumeTypes.GT_MASK, output_size)
-    request.add(VolumeTypes.GT_SCALE, output_size)
+    request.add(VolumeTypes.GT_LABELS, output_sizes[0])
+    request.add(VolumeTypes.GT_MASK, output_sizes[0])
+    # request.add(VolumeTypes.GT_SCALE, output_size)
+
+    # I can't see a straight forward way to iterate over specific volume types,
+    # that's why `eval` is used as a somewhat dirty hack here
+    for scale in range(n_scales):
+        request.add(eval('VolumeTypes.GT_AFFINITIES_S%i' % scale), output_sizes[scale])
+        request.add(eval('VolumeTypes.GT_AFFINITIES_MASK_S%i' % scale), output_sizes[scale])
 
     data_sources = tuple(Hdf5Source(path,
                                     datasets={VolumeTypes.RAW: 'volumes/raw',
@@ -87,6 +99,20 @@ def train_ms_affinities(path_to_meta_graph,
                        ElasticAugment([4, 40, 40], [0, 2, 2], [0, math.pi/2.0], subsample=8) +
                        SimpleAugment(transpose_only_xy=True))
 
+    # define the tensorflow dictionaries
+    # TODO loss weighting
+    input_dict = {net_io_names['raw']: VolumeTypes.RAW}  # , net_io_names['loss_weights']: VolumeTypes.GT_SCALE}
+    # update the input dictionary with multiscale inputs
+    # I can't see a straight forward way to iterate over specific volume types,
+    # that's why `eval` is used as a somewhat dirty hack here
+    input_dict.update({net_io_names['gt_affs_s%i' % scale]: eval('VolumeTypes.GT_AFFINITIES_S%i' % scale)
+                       for scale in range(n_scales)})
+
+    output_dict = {net_io_names['affs_s%i' % scale]: eval('VolumeTypes.PREDICTED_AFFS_S%i' % scale)}
+    gradient_dict = {net_io_names['affs']: eval('VolumeTypes.LOSS_GRADIENT_S%i' % scale)}
+
+    nhood = np.array([[-1, 0, 0], [0, -1, 0], [0, 0, -1]], dtype='uint32')
+
     train_pipeline = (data_sources +
                       RandomProvider() +
                       # first augmentations: add defect augmentations (only raw data)
@@ -104,15 +130,39 @@ def train_ms_affinities(path_to_meta_graph,
                       SplitAndRenumberSegmentationLabels() +
                       GrowBoundary(steps=1,  # we grow less for long range affinities
                                    only_xy=True) +
-                      AddGtAffinities(nhood, gt_labels_mask=VolumeTypes.GT_MASK) +
+                      # we use normal affinities on scale 0
+                      AddGtAffinities(nhood,
+                                      gt_labels=VolumeTypes.GT_LABELS,
+                                      gt_affinities=VolumeTypes.GT_AFFINITIES_S0,
+                                      gt_labels_mask=VolumeTypes.GT_MASK,
+                                      gt_affinities_mask=VolumeTypes.GT_AFFINITIES_MASK_S0) +
+                      # add multiscale affinities for the other scales
+                      AddMultiscaleAffinities(block_shapes[1],
+                                              gt_labels=VolumeTypes.GT_LABELS,
+                                              gt_affinities=VolumeTypes.GT_AFFINITIES_S1,
+                                              gt_labels_mask=VolumeTypes.GT_MASK,
+                                              gt_affinities_mask=VolumeTypes.GT_AFFINITIES_MASK_S1) +
+                      AddMultiscaleAffinities(block_shapes[2],
+                                              gt_labels=VolumeTypes.GT_LABELS,
+                                              gt_affinities=VolumeTypes.GT_AFFINITIES_S2,
+                                              gt_labels_mask=VolumeTypes.GT_MASK,
+                                              gt_affinities_mask=VolumeTypes.GT_AFFINITIES_MASK_S2) +
+                      AddMultiscaleAffinities(block_shapes[3],
+                                              gt_labels=VolumeTypes.GT_LABELS,
+                                              gt_affinities=VolumeTypes.GT_AFFINITIES_S3,
+                                              gt_labels_mask=VolumeTypes.GT_MASK,
+                                              gt_affinities_mask=VolumeTypes.GT_AFFINITIES_MASK_S3) +
                       # intensitiy augmentations and normalizations
                       IntensityAugment(0.9, 1.1, -0.1, 0.1, z_section_wise=True) +
                       IntensityScaleShift(2, -1) +
                       ZeroOutConstSections() +
+                      # TODO we don't balance the labels for now, because of soft multi-scale affinities
+                      # either check with larissa what she does for soft targets in synapses
+                      # or only balance the scale 0 affinities, which are hard
                       # balance the labels
-                      BalanceLabels(labels=VolumeTypes.GT_AFFINITIES,
-                                    scales=VolumeTypes.GT_SCALE,
-                                    mask=VolumeTypes.GT_AFFINITIES_MASK) +
+                      # BalanceLabels(labels=VolumeTypes.GT_AFFINITIES,
+                      #               scales=VolumeTypes.GT_SCALE,
+                      #               mask=VolumeTypes.GT_AFFINITIES_MASK) +
                       # run the actual traing
                       PreCache(cache_size=40,
                                num_workers=10) +
@@ -121,11 +171,9 @@ def train_ms_affinities(path_to_meta_graph,
                             loss=net_io_names['loss'],
                             summary=net_io_names['summary'],
                             log_dir='./log/',
-                            inputs={net_io_names['raw']: VolumeTypes.RAW,
-                                    net_io_names['gt_affs']: VolumeTypes.GT_AFFINITIES,
-                                    net_io_names['loss_weights']: VolumeTypes.GT_SCALE},
-                            outputs={net_io_names['affs']: VolumeTypes.PREDICTED_AFFS},
-                            gradients={net_io_names['affs']: VolumeTypes.LOSS_GRADIENT}) +
+                            inputs=input_dict,
+                            outputs=output_dict,
+                            gradients=gradient_dict) +
                       # Snapshot({VolumeTypes.RAW: 'volumes/raw',
                       #           VolumeTypes.GT_LABELS: 'volumes/labels/neuron_ids',
                       #           VolumeTypes.GT_MASK: 'volumes/labels/mask',

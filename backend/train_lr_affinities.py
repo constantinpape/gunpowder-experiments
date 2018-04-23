@@ -40,6 +40,7 @@ def train_lr_affinities(path_to_meta_graph,
     register_volume_type('GT_MASK')
     register_volume_type('GT_SCALE')
     register_volume_type('GT_AFFINITIES')
+    register_volume_type('GT_AFFINITIES_MASK')
     register_volume_type('PREDICTED_AFFS')
     register_volume_type('LOSS_GRADIENT')
 
