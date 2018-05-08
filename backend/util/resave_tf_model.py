@@ -31,6 +31,9 @@ def resave_model(model, model_checkpoint, model_out):
         # serialize the node names if we don't have output node name yet
         # to check them for the output node name (usually the final activation)
         if output_node_names is None:
+            print("No output node name given.")
+            print("Serializing node names to './output_nodes'")
+            print("Please check for the output node name and enter it in the script")
             s = ''
             for n in tf.get_default_graph().as_graph_def().node:
                 s += str(n)
